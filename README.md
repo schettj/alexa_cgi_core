@@ -22,7 +22,7 @@ Unlike heavy asynchronous web servers (Actix, Axum, Rocket) or complex cloud ser
 
 ## 🛠️ Installation
 
-Add `alexa_cgi_core` to your project's `Cargo.toml` dependencies (if I ever get it into the Crates.io repository):
+Add `alexa_cgi_core` to your project's `Cargo.toml` dependencies:
 
 ```toml
 [dependencies]
@@ -36,11 +36,11 @@ For custom home-automation or private server setups, you can link it directly vi
 alexa_cgi_core = { path = "../alexa_cgi_core" }
 ```
 
-Or reference the GitHub repository securely over SSH:
+Or reference your hosted GitHub repository securely over SSH:
 
 ```toml
 [dependencies]
-alexa_cgi_core = { git = "git@github.com:schettj/alexa_cgi_core.git", branch = "main" }
+alexa_cgi_core = { git = "git@github.com:yourusername/alexa_cgi_core.git", branch = "main" }
 ```
 
 To minimize production execution footprint, optimize your release profile:
@@ -118,19 +118,19 @@ Compile your binary and copy it directly over into your server's executable CGI 
 
 ```bash
 cargo build --release
-sudo cp target/release/your_skill_binary /usr/lib/cgi-bin/skill.cgi
-sudo chmod +x /usr/lib/cgi-bin/skill.cgi
+sudo cp target/release/your_skill_binary /usr/lib/cgi-bin/service1.cgi
+sudo chmod +x /usr/lib/cgi-bin/service1.cgi
 ```
 
 ### 2. Configure Apache SSL VirtualHost
-Amazon **requires** all Alexa endpoints to be served over secure HTTPS with a valid SSL/TLS certificate. Map your legacy or preferred script path alias inside your active port `443` configuration layout file (e.g., `/etc/apache2/sites-enabled/000-default-le-ssl.conf`):
+Amazon **requires** all Alexa endpoints to be served over secure HTTPS with a valid SSL/TLS certificate. Map your script endpoint directly inside your active port `443` configuration layout file (e.g., `/etc/apache2/sites-enabled/000-default-le-ssl.conf`):
 
 ```apache
 <VirtualHost *:443>
     ServerName yourdomain.com
 
-    # Map the clean endpoint path straight to your high-speed compiled Rust CGI binary
-    Alias /skill.php /usr/lib/cgi-bin/skill.cgi
+    # Standard CGI runtime mapping definition routing web hits to your executable
+    ScriptAlias /skill1 /usr/lib/cgi-bin/service1.cgi
 
     <Directory "/usr/lib/cgi-bin">
         AllowOverride None
@@ -151,7 +151,7 @@ sudo systemctl restart apache2
 
 ---
 
-## 🔒 Offloading Amazon Cryptographic Verification in Apache
+## 🔒 Offloading Amazon Cryptographic Verification in Apache (Generic Proxy Method)
 
 For official public Amazon Skill Store certification, inbound requests must pass an intensive cryptographic certificate chain signature check. To keep your Rust CGI binary lightweight and lightning-fast, you can offload this verification step to an Apache proxy authentication layer using `mod_wsgi` and the Python `ask-sdk-webservice-support` package.
 
@@ -162,8 +162,8 @@ sudo pip3 install ask-sdk-webservice-support requests
 sudo a2enmod wsgi proxy proxy_http
 ```
 
-### 2. Create the Apache Verification Wrapper (`/usr/lib/cgi-bin/alexa_verify.py`)
-This tiny WSGI script transparently downloads Amazon's certificate chain, validates the request signature, and forwards the pre-verified data right to your native Rust CGI script loop:
+### 2. Create the Generic Verification Wrapper (`/usr/lib/cgi-bin/alexa_verify.py`)
+This generic WSGI script reads the target executable pathway dynamically out of Apache environment variables, allowing a single script instance to power an infinite array of underlying skills seamlessly:
 
 ```python
 import os
@@ -172,26 +172,32 @@ from ask_sdk_webservice_support.verifier import RequestVerifier, VerificationExc
 
 def application(environ, start_response):
     try:
-        # 1. Gather Amazon's mandatory security headers
+        # 1. Look up the generic target binary path injected by Apache environment rules
+        target_binary = environ.get('TARGET_CGI_BIN', '')
+        if not target_binary or not os.path.exists(target_binary):
+            start_response('500 Internal Server Error', [('Content-Type', 'text/plain')])
+            return [f"Target executable configuration mismatch: '{target_binary}' not found.".encode('utf-8')]
+
+        # 2. Gather Amazon's mandatory security headers
         signature_url = environ.get('HTTP_SIGNATURECERTCHAINURL', '')
         signature = environ.get('HTTP_SIGNATURE', '')
         
         content_length = int(environ.get('CONTENT_LENGTH', 0))
         request_body = environ['wsgi.input'].read(content_length)
 
-        # 2. Execute strict cryptographic validation check via official Amazon algorithms
+        # 3. Execute strict cryptographic validation check via official Amazon algorithms
         verifier = RequestVerifier()
         verifier.verify(request_body.decode('utf-8'), signature, signature_url)
 
-        # 3. Signature is valid! Forward body payload stream to your high-speed Rust CGI binary
+        # 4. Signature is valid! Forward body payload stream to your target generic binary
         proc = subprocess.Popen(
-            ['/usr/lib/cgi-bin/skill.cgi'],
+            [target_binary],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=os.environ.copy()
         )
         stdout_data, _ = proc.communicate(input=request_body)
 
-        # 4. Return the compiled response payload transparently
+        # 5. Return the compiled response payload transparently
         start_response('200 OK', [('Content-Type', 'application/json;charset=UTF-8')])
         return [stdout_data]
 
@@ -203,15 +209,28 @@ def application(environ, start_response):
         return [str(e).encode('utf-8')]
 ```
 
-### 3. Update Apache SSL VirtualHost Mapping
-Point your Alexa skill endpoint configuration straight to the verification gateway file inside your port `443` configuration layout:
+### 3. Update Apache SSL VirtualHost Mapping (Deploying Multiple Skills Generically)
+Use Apache's `WSGIScriptAlias` combined with `<Location>` blocks to establish endpoints for `service1.cgi` and `service2.cgi`, passing the target paths via `SetEnv TARGET_CGI_BIN`:
 
 ```apache
 <VirtualHost *:443>
     ServerName yourdomain.com
 
-    # Direct incoming Alexa hits through the validation proxy script
-    WSGIScriptAlias /skill.php /usr/lib/cgi-bin/alexa_verify.py
+    # -------------------------------------------------------------
+    # Skill A Mapping (Service 1 Gateway)
+    # -------------------------------------------------------------
+    WSGIScriptAlias /skill1 /usr/lib/cgi-bin/alexa_verify.py
+    <Location /skill1>
+        SetEnv TARGET_CGI_BIN /usr/lib/cgi-bin/service1.cgi
+    </Location>
+
+    # -------------------------------------------------------------
+    # Skill B Mapping (Service 2 Gateway)
+    # -------------------------------------------------------------
+    WSGIScriptAlias /skill2 /usr/lib/cgi-bin/alexa_verify.py
+    <Location /skill2>
+        SetEnv TARGET_CGI_BIN /usr/lib/cgi-bin/service2.cgi
+    </Location>
 
     <Directory "/usr/lib/cgi-bin">
         Options +ExecCGI
@@ -220,7 +239,7 @@ Point your Alexa skill endpoint configuration straight to the verification gatew
 </VirtualHost>
 ```
 
-Restart Apache (`sudo systemctl restart apache2`) to push the secure setup live.
+Restart Apache (`sudo systemctl restart apache2`) to apply the configuration change.
 
 ---
 
