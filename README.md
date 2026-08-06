@@ -22,7 +22,7 @@ Unlike heavy asynchronous web servers (Actix, Axum, Rocket) or complex cloud ser
 
 ## 🛠️ Installation
 
-Add `alexa_cgi_core` to your project's `Cargo.toml` dependencies:
+Add `alexa_cgi_core` to your project's `Cargo.toml` dependencies (if I ever get it into the Crates.io repository):
 
 ```toml
 [dependencies]
@@ -36,11 +36,11 @@ For custom home-automation or private server setups, you can link it directly vi
 alexa_cgi_core = { path = "../alexa_cgi_core" }
 ```
 
-Or reference your hosted GitHub repository securely over SSH:
+Or reference the GitHub repository securely over SSH:
 
 ```toml
 [dependencies]
-alexa_cgi_core = { git = "git@github.com:yourusername/alexa_cgi_core.git", branch = "main" }
+alexa_cgi_core = { git = "git@github.com:schettj/alexa_cgi_core.git", branch = "main" }
 ```
 
 To minimize production execution footprint, optimize your release profile:
